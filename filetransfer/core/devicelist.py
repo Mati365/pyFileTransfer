@@ -3,6 +3,8 @@ import ipaddress
 
 from threading import Thread
 from ..tools import get_milliseconds, create_interval
+from ..settings import ports
+
 
 # Device visible in device list
 class NetworkHost:
@@ -18,11 +20,10 @@ class NetworkHost:
 
 # Client that contains deivces list
 class DeviceList(Thread):
-    def __init__(self, max_connections=8, port=12345):
+    def __init__(self):
         Thread.__init__(self)
 
         self.local_ip = DeviceList.get_local_ip()
-        self.port = port
         self.devices = {}
         self.__open_sockets()
 
@@ -34,7 +35,7 @@ class DeviceList(Thread):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        self.socket.bind(("", self.port))
+        self.socket.bind(("", ports["broadcast"]))
 
     @staticmethod
     def get_local_ip():
@@ -55,13 +56,13 @@ class DeviceList(Thread):
         local network.
         """
         create_interval(lambda:(
-              self.socket.sendto("".encode("utf-8"), ("255.255.255.255", self.port))
+              self.socket.sendto("".encode("utf-8"), ("255.255.255.255", ports["broadcast"]))
             , self.__reload_list()
         ), 1)
 
         # Fetch computer hostname and ip in network
         while True:
-            (message, address) = self.socket.recvfrom(self.port)
+            (message, address) = self.socket.recvfrom(ports["broadcast"])
             address = socket.getfqdn(address[0])
 
             if address == self.local_ip:

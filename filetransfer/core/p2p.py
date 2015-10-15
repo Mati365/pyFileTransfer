@@ -7,20 +7,16 @@ import math
 
 from threading import Thread
 from enum import IntEnum
+from .. import settings
 
 class Flags(IntEnum):
     BEGIN_COPYING = 0x1
     STOP_COPYING = 0x2
 flag_response = struct.Struct("I")
-block_size = 512
 
 class P2PClient:
-    # Simple client thread that sends data to server
+    # Simple core thread that sends data to server
     class __ClientThread__(Thread):
-        def __init__(self, port=12346):
-            Thread.__init__(self)
-            self.port = port
-
         @staticmethod
         def list_files(dir):
             """ List all files in directory without rootpath
@@ -62,45 +58,50 @@ class P2PClient:
             # Send list of all files to transfer
             self.client_sock.send(pickle.dumps(files))
             for (file, size) in files[0]:
-                for chunk in self.read_from_file(files[2] + file, block_size):
+                for chunk in self.read_from_file(files[2] + file, settings.block_size):
                     self.client_sock.send(chunk)
 
-
-
-        def send_to(self, dir, address=""):
+        def send_to(self, address, path="", files=()):
             """ Sending files to socket
-            :param dir:     Directory
             :param address: IP address of computer
+            :param files:   List of files
             """
+            if path != "":
+                files = self.list_files(path)
+
             self.client_sock = socket.socket()
-            self.client_sock.connect((address, self.port))
+            self.client_sock.connect((address, settings.ports["transfer"]))
             with self.client_sock as s:
                 if flag_response.unpack(s.recv(4))[0] == Flags.BEGIN_COPYING:
-                    self.upload_files(self.list_files(dir))
+                    self.upload_files(files)
                 else:
                     print("Computer doesn't accept connection!")
 
-    # Simple server thread that downloads data from client
+    # Simple server thread that downloads data from core
     class __ServerThread__(Thread):
-        def __init__(self, port=12346):
+        def __init__(self):
             Thread.__init__(self)
-            self.__create_server(port)
 
-        def __create_server(self, port):
+            self.__create_server()
+            self.start()
+
+        def __create_server(self):
             """ Create P2P server
-            :param port: Port
             """
-            self.port = port
             self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                self.server_sock.bind(("", self.port))
+                self.server_sock.bind(("", settings.ports["transfer"]))
                 self.server_sock.listen(1)
             except socket.error as msg:
                 print("Cannot create P2P server: " + str(msg))
                 sys.exit()
 
         def receive_data(self, conn):
+            """ Receive files from core
+            :param conn: Client socket
+            :return:
+            """
             conn.send(flag_response.pack(Flags.BEGIN_COPYING))
             (file_list, total_size, root_path) = pickle.loads(conn.recv(4096))
 
@@ -114,10 +115,9 @@ class P2PClient:
                 # Close previous file
                 with open(dir + "/" + os.path.basename(file[0]), "wb+") as f:
                     total_size = file[1]
-                    for i in range(0, math.ceil(file[1] / block_size)):
-                        total_size -= block_size
-                        f.write(conn.recv((block_size + total_size) if total_size < 0 else block_size))
-
+                    for i in range(0, math.ceil(file[1] / settings.block_size)):
+                        total_size -= settings.block_size
+                        f.write(conn.recv((settings.block_size + total_size) if total_size < 0 else settings.block_size))
 
         def run(self):
             with self.server_sock as s:
@@ -127,6 +127,7 @@ class P2PClient:
                         self.receive_data(conn)
                     conn.close()
 
+    # Create both client and server
     def __init__(self):
-        self.__ServerThread__().start()
-        self.__ClientThread__().send_to("/home/mateusz/Pulpit/PycharmProjects/pyFileTransfer/filetransfer/")
+        self.server = self.__ServerThread__()
+        self.client = self.__ClientThread__()

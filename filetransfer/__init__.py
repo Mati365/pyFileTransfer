@@ -1,0 +1,5 @@
+__appname__= "file-transfer"
+__author__ = "Mateusz Bagiński"
+__version__ = "0.1"
+__description__ = "A small tool that helps with sending files through local network"
+__license__= "MIT"
