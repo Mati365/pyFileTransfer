@@ -1,2 +1,4 @@
 .idea/
 *~
+download/
+__pycache__/
