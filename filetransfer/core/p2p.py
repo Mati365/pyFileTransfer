@@ -15,30 +15,40 @@ class Flags(IntEnum):
 flag_response = struct.Struct("I")
 
 class P2PClient:
+    @staticmethod
+    def list_files(dir):
+        """ List all files in directory without rootpath
+        :param dir: Directory
+        :return:    (files, total_size)
+        """
+        def get_file_info(file, folder_root="", root_path=""):
+            path = folder_root.replace(root_path, "") + "/" + file
+            return ( path
+                   , os.path.getsize(root_path + path)
+                   )
+
+        # If file return array with one file
+        if os.path.isfile(dir):
+            root = os.path.dirname(dir)
+            file = get_file_info(os.path.basename(dir), root_path=root)
+            return ([file], file[1], root)
+
+        total = []
+        total_size = 0
+        root_path = ""
+
+        for (folder_root, dirs, files) in os.walk(dir):
+            if not len(total):
+                root_path = folder_root
+
+            for file in files:
+                total.append(get_file_info(file, folder_root, root_path))
+                total_size += total[-1][1]
+
+        return (total, total_size, root_path)
+
     # Simple core thread that sends data to server
     class __ClientThread__(Thread):
-        @staticmethod
-        def list_files(dir):
-            """ List all files in directory without rootpath
-            :param dir: Directory
-            :return:    (files, total_size)
-            """
-            total = []
-            total_size = 0
-            root_path = ""
-            for (root, dirs, files) in os.walk(dir):
-                if not len(total):
-                    root_path = root
-
-                for file in files:
-                    path = root.replace(root_path, "") + "/" + file
-                    size = os.path.getsize(root_path + path)
-
-                    total.append((path, size))
-                    total_size += size
-
-            return (total, total_size, root_path)
-
         @staticmethod
         def read_from_file(filename, chunk_size):
             """ Reads chunk of binary data from file and yield it
@@ -67,7 +77,7 @@ class P2PClient:
             :param files:   List of files
             """
             if path != "":
-                files = self.list_files(path)
+                files = P2PClient.list_files(path)
 
             self.client_sock = socket.socket()
             self.client_sock.connect((address, settings.ports["transfer"]))
