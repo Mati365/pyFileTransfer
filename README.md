@@ -3,6 +3,9 @@
 
 _A small python3 tool that helps with sending files through local network._ **Program works on Linux.**
 
+# Screens
+![Logo](/doc/1.png)
+
 ## License
 The MIT License (MIT)
 
