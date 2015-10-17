@@ -2,9 +2,10 @@ import socket
 import ipaddress
 
 from threading import Thread
+
 from ..tools import get_milliseconds, create_interval
 from ..settings import ports
-
+from .events import EventHandler
 
 # Device visible in device list
 class NetworkHost:
@@ -19,18 +20,20 @@ class NetworkHost:
         return get_milliseconds() - self.last_seen <= 3000
 
 # Client that contains deivces list
-class DeviceList(Thread):
-    def __init__(self):
-        Thread.__init__(self)
+class DeviceScanner(Thread):
+    def __init__(self, handler):
+        Thread.__init__(self, daemon = True)
 
-        self.local_ip = DeviceList.get_local_ip()
+        self.handler = handler
+        self.local_ip = DeviceScanner.get_local_ip()
         self.devices = {}
+
         self.__open_sockets()
+        self.start()
 
     def __open_sockets(self):
         """ Create app sockets
         :param port: App port
-        :return:
         """
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -70,3 +73,4 @@ class DeviceList(Thread):
                     self.devices[address].last_seen = get_milliseconds()
                 else:
                     self.devices[address] = NetworkHost(address)
+                    self.handler.on_device_list_update(self.devices)

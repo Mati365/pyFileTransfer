@@ -5,6 +5,7 @@ import os
 import pickle
 import math
 
+from queue import Queue
 from threading import Thread
 from enum import IntEnum
 from .. import settings
@@ -12,7 +13,7 @@ from .. import settings
 class Flags(IntEnum):
     BEGIN_COPYING = 0x1
     STOP_COPYING = 0x2
-flag_response = struct.Struct("I")
+int_response = struct.Struct("I")
 
 class P2PClient:
     @staticmethod
@@ -48,7 +49,11 @@ class P2PClient:
         return (total, total_size, root_path)
 
     # Simple core thread that sends data to server
-    class __ClientThread__(Thread):
+    class __Client__(Thread):
+        def __init__(self, handler):
+            Thread.__init__(self, daemon = True)
+            self.handler = handler
+
         @staticmethod
         def read_from_file(filename, chunk_size):
             """ Reads chunk of binary data from file and yield it
@@ -64,33 +69,41 @@ class P2PClient:
                     else:
                         break
 
-        def upload_files(self, files):
-            # Send list of all files to transfer
-            self.client_sock.send(pickle.dumps(files))
-            for (file, size) in files[0]:
-                for chunk in self.read_from_file(files[2] + file, settings.block_size):
-                    self.client_sock.send(chunk)
+        def upload_files(self, blocks):
+            # Send number of blocks
+            self.client_sock.send(int_response.pack(len(blocks)))
+            for block in blocks:
+                # Send block header
+                block_header = pickle.dumps(block)
+                self.client_sock.send(int_response.pack(len(block_header)))
+                self.client_sock.send(block_header)
 
-        def send_to(self, address, path="", files=()):
+                # Send files
+                for (file, size) in block[0]:
+                    for chunk in self.read_from_file(block[2] + file, settings.block_size):
+                        self.client_sock.send(chunk)
+
+        def send_to(self, address, path="", blocks=None):
             """ Sending files to socket
             :param address: IP address of computer
-            :param files:   List of files
+            :param blocks:  List of dirs
             """
             if path != "":
-                files = P2PClient.list_files(path)
+                blocks = [P2PClient.list_files(path)]
 
             self.client_sock = socket.socket()
             self.client_sock.connect((address, settings.ports["transfer"]))
             with self.client_sock as s:
-                if flag_response.unpack(s.recv(4))[0] == Flags.BEGIN_COPYING:
-                    self.upload_files(files)
+                if int_response.unpack(s.recv(4))[0] == Flags.BEGIN_COPYING:
+                    self.upload_files(blocks)
                 else:
                     print("Computer doesn't accept connection!")
 
     # Simple server thread that downloads data from core
     class __ServerThread__(Thread):
-        def __init__(self):
-            Thread.__init__(self)
+        def __init__(self, handler):
+            Thread.__init__(self, daemon = True)
+            self.handler = handler
 
             self.__create_server()
             self.start()
@@ -110,34 +123,38 @@ class P2PClient:
         def receive_data(self, conn):
             """ Receive files from core
             :param conn: Client socket
-            :return:
             """
-            conn.send(flag_response.pack(Flags.BEGIN_COPYING))
-            (file_list, total_size, root_path) = pickle.loads(conn.recv(4096))
+            conn.send(int_response.pack(Flags.BEGIN_COPYING))
+            blocks = int_response.unpack(conn.recv(4))[0]
 
-            for file in file_list:
-                # Create file previous chunk is empty
-                # Create directory if not exists
-                dir = os.path.abspath("../download/" + os.path.dirname(file[0]))
-                if not os.path.exists(dir):
-                    os.makedirs(dir)
+            for block in range(0, blocks):
+                # Receive block header
+                block_header_size = int_response.unpack(conn.recv(4))[0]
+                (file_list, total_size, root_path) = pickle.loads(conn.recv(block_header_size))
 
-                # Close previous file
-                with open(dir + "/" + os.path.basename(file[0]), "wb+") as f:
-                    total_size = file[1]
-                    for i in range(0, math.ceil(file[1] / settings.block_size)):
-                        total_size -= settings.block_size
-                        f.write(conn.recv((settings.block_size + total_size) if total_size < 0 else settings.block_size))
+                for file in file_list:
+                    # Create file previous chunk is empty
+                    # Create directory if not exists
+                    dir = os.path.abspath("../download/" + os.path.dirname(file[0]))
+                    if not os.path.exists(dir):
+                        os.makedirs(dir)
+
+                    # Close previous file
+                    with open(dir + "/" + os.path.basename(file[0]), "wb+") as f:
+                        total_size = file[1]
+                        for i in range(0, math.ceil(file[1] / settings.block_size)):
+                            total_size -= settings.block_size
+                            f.write(conn.recv((settings.block_size + total_size) if total_size < 0 else settings.block_size))
 
         def run(self):
             with self.server_sock as s:
                 while 1:
-                    (conn, (address, port)) = s.accept()
+                    conn = s.accept()[0]
                     if True:
                         self.receive_data(conn)
                     conn.close()
 
     # Create both client and server
-    def __init__(self):
-        self.server = self.__ServerThread__()
-        self.client = self.__ClientThread__()
+    def __init__(self, handler):
+        self.server = self.__ServerThread__(handler)
+        self.client = self.__Client__(handler)
