@@ -1,11 +1,25 @@
 import urllib
 
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GObject
 from urllib.parse import urlparse
 
 from ..core.p2p import P2PClient
-from ..core.scanner import DeviceScanner
 from ..core.events import EventHandler
+
+def show_msg_box(parent, title, message, buttons=Gtk.ButtonsType.OK_CANCEL, type=Gtk.MessageType.WARNING):
+    """ Show message box
+    :param parent:  Parent window
+    :param title:   Title
+    :param message: Content
+    :param buttons: Buttons
+    :param type:    Icon type
+    :return: MessageBox value
+    """
+    dialog = Gtk.MessageDialog(parent, 0, type, buttons, title)
+    dialog.format_secondary_text(message)
+    response = dialog.run()
+    dialog.destroy()
+    return response == Gtk.ResponseType.OK
 
 class FileList(list):
     def __init__(self):
@@ -34,11 +48,10 @@ class AppWindow(Gtk.Window, EventHandler):
         self.connect("delete-event", Gtk.main_quit)
         self.show_all()
 
-        self.scanner = DeviceScanner(self)
         self.p2p = P2PClient(self)
-
         Gtk.main()
 
+    # UI
     def __create_client_list_panel(self):
         scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -129,14 +142,9 @@ class AppWindow(Gtk.Window, EventHandler):
                 return "{0:.2f}{1}".format(bytes, unit)
             bytes /= 1024.0
 
-    def on_device_list_update(self, devices):
-        self.clients.clear()
-        for ip in devices:
-            self.clients.append([ip, False])
-
     def __send_files(self, button):
         for ip in [client[0] for client in self.clients if client[1]]:
-            self.p2p.client.send_to(ip, blocks=self.file_list)
+            self.p2p.send_files(ip, self.file_list)
 
     def _reload_file_list(self):
         self.total_files_label.set_text("Files: {}".format(self.file_list.total_files))
@@ -147,7 +155,26 @@ class AppWindow(Gtk.Window, EventHandler):
             for file in nested_list[0]:
                 self.files.append([AppWindow.get_text_size(file[1]), file[0], nested_list[2]])
 
+    # Messages
     def __on_drag_data_received(self, widget, drag_context, x, y, data, info, time):
         for url in urllib.parse.unquote(data.get_data().decode("UTF-8")).splitlines():
             self.file_list.append(P2PClient.list_files(urlparse(url).path))
         self._reload_file_list()
+
+    def on_device_list_update(self, devices):
+        self.clients.clear()
+        for ip in devices:
+            self.clients.append([ip, False])
+
+    def on_accept_connection_prompt(self, ip, thread):
+        def runner():
+            if show_msg_box(self, "Connection", "Incoming connection from {}. Accept?".format(ip)):
+                thread.accept_connection()
+            else:
+                thread.refuse_connection()
+            return False
+
+        GObject.idle_add(runner)
+
+    def on_refuse_connection_prompt(self):
+        GObject.idle_add(show_msg_box, self, "Connection", "Receiver refused the connection!", Gtk.ButtonsType.CANCEL)
